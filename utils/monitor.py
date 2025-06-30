@@ -22,10 +22,10 @@ def update_monitor_data(symbol):
             if position_amt < 0:
                 pnl_pct = -pnl_pct
             monitor_data[symbol] = {
-                "position_amt": position_amt,
-                "entry_price": entry_price,
-                "mark_price": mark_price,
-                "pnl_pct": round(pnl_pct, 2)
+                "수량": position_amt,
+                "진입가": entry_price,
+                "시장가": mark_price,
+                "수익률": round(pnl_pct, 2)
             }
 
 def get_monitor_data():
