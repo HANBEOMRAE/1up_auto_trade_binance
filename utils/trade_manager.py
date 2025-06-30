@@ -13,9 +13,10 @@ API_SECRET = os.getenv("BINANCE_API_SECRET")
 client = Client(API_KEY, API_SECRET)
 logger = Logger()
 
+# 설정 값
 LEVERAGE = 5
-INITIAL_CAPITAL = 100.0
-capital = INITIAL_CAPITAL
+INITIAL_CAPITAL = 100.0  # 초기 증거금
+capital = INITIAL_CAPITAL  # 복리 운용 자본
 POSITION = None
 entry_price = 0.0
 tp1_done = False
@@ -39,30 +40,27 @@ def enter_position(symbol, side):
 
     set_leverage(symbol, LEVERAGE)
 
-    # 초기 증거금의 98%만 사용
+    # 초기 증거금의 98% 사용
     amount_to_use = capital * 0.98
-
-    # USDT 기준 금액으로 주문 → 수량 계산
     price = float(client.futures_symbol_ticker(symbol=symbol)['price'])
-    quote_qty = round(amount_to_use * LEVERAGE, 2)  # 레버리지 포함 전체 주문 금액
+    quantity = round((amount_to_use * LEVERAGE) / price, 3)
 
     try:
-        # quoteOrderQty 방식으로 주문 (시장가)
         client.futures_create_order(
             symbol=symbol,
             side=side,
             type="MARKET",
-            quoteOrderQty=quote_qty
+            quantity=quantity
         )
         POSITION = side
         entry_price = price
         tp1_done = False
         tp2_done = False
         stop_loss_shifted = False
-        logger.log(f"진입: {side}, 진입금액: {quote_qty} USDT, 레버리지: {LEVERAGE}배")
+        logger.log(f"진입: {side}, 가격: {price}, 수량: {quantity}, 사용금액: {amount_to_use}")
     except Exception as e:
         logger.log(f"진입 오류: {e}")
-        
+
 def close_position(symbol):
     """포지션 전량 청산"""
     global POSITION, capital
