@@ -1,4 +1,4 @@
-# webhook_server.py (또는 기존 Flask 서버 파일)
+# webhook_server.py
 
 from flask import Flask, request, jsonify, render_template_string
 from utils.trade_manager import handle_signal, check_exit_conditions
@@ -33,30 +33,20 @@ def monitor():
     data = get_monitor_data()
     html = """
     <html>
-    <head>
-        <meta http-equiv="refresh" content="30">
-    </head>
-    <body>
-        <h2>실시간 모니터링 데이터</h2>
-        <pre>{{ data }}</pre>
-    </body>
+    <head><meta http-equiv="refresh" content="30"></head>
+    <body><h2>실시간 모니터링</h2><pre>{{ data }}</pre></body>
     </html>
     """
     return render_template_string(html, data=data)
 
 @app.route('/report')
 def report_view():
-    report.init_report()  # 파일 없으면 생성
+    report.init_report()
     data = report.get_report()
     html = """
     <html>
-    <head>
-        <meta http-equiv="refresh" content="30">
-    </head>
-    <body>
-        <h2>트레이딩 리포트</h2>
-        <pre>{{ data }}</pre>
-    </body>
+    <head><meta http-equiv="refresh" content="30"></head>
+    <body><h2>트레이딩 리포트</h2><pre>{{ data }}</pre></body>
     </html>
     """
     return render_template_string(html, data=data)
