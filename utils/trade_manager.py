@@ -1,41 +1,55 @@
 import time
 import datetime
 import os
+import math
 from binance.client import Client
 from dotenv import load_dotenv
 from utils.logger import Logger
 from utils.monitor import update_monitor_data
-import math
 
-# .env 파일에서 API 키 로드
+# 환경 변수 로딩
 load_dotenv()
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 
-# Binance API 클라이언트 및 로그 모듈 초기화
+# Binance 클라이언트 및 로거 설정
 client = Client(API_KEY, API_SECRET)
 logger = Logger()
 
-# 설정값
+# 기본 설정값
 LEVERAGE = 5
 INITIAL_CAPITAL = 100.0
 
+# 상태 저장용 딕셔너리
 capital_map = {}
 position_states = {}
 last_switch_time = {}
+symbol_precision_map = {}
 
-def get_stepsize(symbol):
+# 심볼의 최소 주문 수량 단위 및 가격 소수점 단위 반환
+def get_symbol_precision(symbol):
     info = client.futures_exchange_info()
     for s in info['symbols']:
         if s['symbol'] == symbol:
+            qty_step = 0.001
+            price_tick = 0.01
             for f in s['filters']:
                 if f['filterType'] == 'LOT_SIZE':
-                    return float(f['stepSize'])
-    return 0.001
+                    qty_step = float(f['stepSize'])
+                elif f['filterType'] == 'PRICE_FILTER':
+                    price_tick = float(f['tickSize'])
+            symbol_precision_map[symbol] = (qty_step, price_tick)
+            return qty_step, price_tick
+    return 0.001, 0.01
 
 def adjust_quantity(symbol, quantity):
-    step = get_stepsize(symbol)
-    return math.floor(quantity / step) * step
+    qty_step, _ = symbol_precision_map.get(symbol, get_symbol_precision(symbol))
+    return math.floor(quantity / qty_step) * qty_step
+
+def round_price(symbol, price):
+    _, tick_size = symbol_precision_map.get(symbol, get_symbol_precision(symbol))
+    precision = abs(int(round(-math.log10(tick_size), 0)))
+    return round(price, precision)
 
 def get_position_state(symbol):
     if symbol not in position_states:
@@ -74,6 +88,80 @@ def get_current_position_quantity(symbol):
         logger.log(f"포지션 수량 조회 오류: {e}")
     return 0
 
+def cancel_all_open_orders(symbol):
+    try:
+        client.futures_cancel_all_open_orders(symbol=symbol)
+    except Exception as e:
+        logger.log(f"{symbol} 오픈 주문 취소 실패: {e}")
+
+def place_tp_sl_orders(symbol, entry_price, quantity, side):
+    opposite = 'SELL' if side == 'BUY' else 'BUY'
+    qty_step, _ = get_symbol_precision(symbol)
+    tp1_price = round_price(symbol, entry_price * 1.005)
+    tp2_price = round_price(symbol, entry_price * 1.011)
+    sl_price = round_price(symbol, entry_price * 0.995)
+
+    tp1_qty = adjust_quantity(symbol, quantity * 0.3)
+    tp2_qty = adjust_quantity(symbol, quantity * 0.35)
+
+    try:
+        client.futures_create_order(
+            symbol=symbol,
+            side=opposite,
+            type='TAKE_PROFIT_MARKET',
+            stopPrice=tp1_price,
+            quantity=tp1_qty,
+            reduceOnly=True,
+            timeInForce='GTC',
+            newClientOrderId=f"{symbol}_TP1"
+        )
+        client.futures_create_order(
+            symbol=symbol,
+            side=opposite,
+            type='TAKE_PROFIT_MARKET',
+            stopPrice=tp2_price,
+            quantity=tp2_qty,
+            reduceOnly=True,
+            timeInForce='GTC',
+            newClientOrderId=f"{symbol}_TP2"
+        )
+        client.futures_create_order(
+            symbol=symbol,
+            side=opposite,
+            type='STOP_MARKET',
+            stopPrice=sl_price,
+            quantity=quantity,
+            reduceOnly=True,
+            timeInForce='GTC',
+            newClientOrderId=f"{symbol}_SL"
+        )
+        logger.log(f"{symbol} TP/SL 주문 설정 완료")
+    except Exception as e:
+        logger.log(f"{symbol} TP/SL 주문 설정 실패: {e}")
+
+def monitor_tp1_fill(symbol, entry_price, side):
+    opposite = 'SELL' if side == 'BUY' else 'BUY'
+    sl_new_price = round_price(symbol, entry_price * 1.001)
+    try:
+        orders = client.futures_get_open_orders(symbol=symbol)
+        tp1_filled = all(o.get("clientOrderId") != f"{symbol}_TP1" for o in orders)
+        if tp1_filled:
+            client.futures_cancel_order(symbol=symbol, origClientOrderId=f"{symbol}_SL")
+            logger.log(f"{symbol} TP1 체결 감지 → 기존 SL 취소 후 상향 SL 설정")
+            current_qty = get_current_position_quantity(symbol)
+            client.futures_create_order(
+                symbol=symbol,
+                side=opposite,
+                type='STOP_MARKET',
+                stopPrice=sl_new_price,
+                quantity=adjust_quantity(symbol, current_qty),
+                reduceOnly=True,
+                timeInForce='GTC',
+                newClientOrderId=f"{symbol}_SL_ADJ"
+            )
+    except Exception as e:
+        logger.log(f"{symbol} TP1 SL 수정 실패: {e}")
+
 def enter_position(symbol, side):
     state = get_position_state(symbol)
     if state["side"]:
@@ -81,6 +169,7 @@ def enter_position(symbol, side):
         return
 
     set_leverage(symbol, LEVERAGE)
+    cancel_all_open_orders(symbol)
 
     if symbol not in capital_map:
         capital_map[symbol] = INITIAL_CAPITAL
@@ -100,6 +189,7 @@ def enter_position(symbol, side):
         state["side"] = side
         state["entry_price"] = price
         logger.log(f"{symbol} 진입: {side}, 가격: {price}, 수량: {quantity}, 자금: {amount_to_use}")
+        place_tp_sl_orders(symbol, price, quantity, side)
     except Exception as e:
         logger.log(f"{symbol} 진입 실패: {e}")
 
@@ -113,6 +203,7 @@ def close_position(symbol):
 
     side = 'SELL' if state["side"] == 'BUY' else 'BUY'
     try:
+        cancel_all_open_orders(symbol)
         client.futures_create_order(
             symbol=symbol,
             side=side,
@@ -131,8 +222,8 @@ def close_position(symbol):
 def switch_position(symbol, new_side):
     quantity = get_current_position_quantity(symbol)
     if quantity > 0:
-        # 1. 기존 포지션 청산
         try:
+            cancel_all_open_orders(symbol)
             client.futures_create_order(
                 symbol=symbol,
                 side='SELL' if new_side == 'BUY' else 'BUY',
@@ -169,3 +260,5 @@ def handle_signal(symbol, side):
 
     if not state["side"]:
         enter_position(symbol, side)
+    else:
+        monitor_tp1_fill(symbol, state["entry_price"], side)
