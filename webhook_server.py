@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from utils.trade_manager import handle_signal, check_exit_conditions
+from utils.trade_manager import handle_signal
 from utils.monitor import update_monitor_data
 import threading
 import time
@@ -39,7 +39,6 @@ def process_signal(symbol, signal):
 
         # 무한 루프 대신 제한된 루프로 변경 (예: 5분간 모니터링)
         for _ in range(60):
-            check_exit_conditions(symbol)
             update_monitor_data(symbol)
             time.sleep(5)
 
