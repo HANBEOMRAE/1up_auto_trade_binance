@@ -5,7 +5,6 @@ import threading
 import time
 
 app = Flask(__name__)
-monitor_data = {}
 
 @app.route('/')
 def home():
@@ -20,7 +19,7 @@ def webhook():
         print(f"[WEBHOOK 수신] symbol: {symbol}, signal: {signal}")
 
         if symbol and signal:
-            # 비동기 처리 (메인 서버는 바로 응답)
+            signal = signal.upper()  # ✅ 대문자 변환 필수!
             threading.Thread(target=process_signal, args=(symbol, signal)).start()
             return jsonify({"status": "received"}), 200
         else:
@@ -31,16 +30,18 @@ def webhook():
         print(f"[WEBHOOK 예외 발생] {e}")
         return jsonify({"error": "exception", "message": str(e)}), 400
 
+# 신호 처리 및 수익률 모니터링 스레드
 def process_signal(symbol, signal):
     try:
         print(f"[PROCESS 시작] {symbol}, {signal}")
         handle_signal(symbol, signal)
         print(f"[PROCESS 실행 완료] handle_signal 호출 완료")
 
-        while True:
+        # 무한 루프 대신 제한된 루프로 변경 (예: 5분간 모니터링)
+        for _ in range(60):
             check_exit_conditions(symbol)
             update_monitor_data(symbol)
             time.sleep(5)
 
     except Exception as e:
-        print(f"[PROCESS 예외] {e}")
+        print(f"[PROCESS 예외] {symbol} - {e}")
