@@ -45,3 +45,7 @@ def process_signal(symbol, signal):
 
     except Exception as e:
         print(f"[PROCESS 예외] {symbol} - {e}")
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
