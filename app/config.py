@@ -14,7 +14,7 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 # 잔고의 몇 %를 사용해서 진입할지
 BUY_PCT        = float(os.getenv("BUY_PCT", "0.98"))
 # 레버리지 배율
-TRADE_LEVERAGE = int(os.getenv("TRADE_LEVERAGE", "1"))
+TRADE_LEVERAGE = int(os.getenv("TRADE_LEVERAGE", "5"))
 # 익절 비율 (+0.5% → 1.005)
 TP_RATIO       = float(os.getenv("TP_RATIO", "1.005"))
 # 익절 시 분할 매도의 비중 (50% → 0.5)
