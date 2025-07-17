@@ -66,9 +66,9 @@ def execute_sell(symbol: str) -> dict:
             mul = 10 ** price_prec
             return math.ceil(p * mul) / mul
 
-        # TP1 (-0.5%, 30%)
-        tp1_p  = ceil_p(entry_price * 0.995)
-        tp1_q  = math.floor(executed_qty * 0.30 / step_size) * step_size
+        # TP1 (-0.3%, 20%)
+        tp1_p  = ceil_p(entry_price * 0.997)
+        tp1_q  = math.floor(executed_qty * 0.20 / step_size) * step_size
         tp1_id = client.futures_create_order(
             symbol=symbol, side=SIDE_BUY, type=TP_MARKET,
             stopPrice=f"{tp1_p:.{price_prec}f}",
@@ -85,8 +85,8 @@ def execute_sell(symbol: str) -> dict:
             reduceOnly=True, quantity=f"{tp2_q:.{qty_prec}f}"
         )["orderId"]
 
-        # SL (+0.5%, full)
-        sl_p    = ceil_p(entry_price * 1.005)
+        # SL (+0.3%, full)
+        sl_p    = ceil_p(entry_price * 1.003)
         sl_id   = client.futures_create_order(
             symbol=symbol, side=SIDE_BUY, type=SL_MARKET,
             stopPrice=f"{sl_p:.{price_prec}f}",
