@@ -8,14 +8,17 @@ from zoneinfo import ZoneInfo
 from binance import ThreadedWebsocketManager
 from app.clients.binance_client import get_binance_client
 from app.state import monitor_state
-from app.config import POLL_INTERVAL, TP_RATIO, SL_RATIO
+from app.config import POLL_INTERVAL
 
 logger = logging.getLogger("monitor")
 logger.setLevel(logging.INFO)
 
 
 def _handle_order_update(msg):
-    # ENTRY 가격·수량을 WebSocket으로 잡아두는 부분은 그대로 유지
+    """
+    ENTRY 가격·수량을 WebSocket으로 감지하여 monitor_state에 기록만 합니다.
+    TP/SL 주문은 buy.py / sell.py 쪽에서 모두 처리하므로 여기서는 주문을 생성하지 않습니다.
+    """
     o = msg.get("o", {})
     if msg.get("e") == "ORDER_TRADE_UPDATE" and \
        o.get("X") == "FILLED" and o.get("S") == "BUY" and o.get("o") == "MARKET":
@@ -23,103 +26,45 @@ def _handle_order_update(msg):
         qty   = float(o.get("q", 0))
         now   = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
         monitor_state.update({
-            "entry_price":    price,
-            "position_qty":   qty,
-            "entry_time":     now,
-            "first_tp_done":  False,
-            "second_tp_done": False,
-            "sl_done":        False
+            "symbol":        msg.get("s"),     # ex. "ETHUSDT"
+            "entry_price":   price,
+            "position_qty":  qty,
+            "entry_time":    now,
+            "first_tp_done": False,
+            "second_tp_done":False,
+            "sl_done":       False,
+            "current_price": price,
+            "pnl":           0.0
         })
-        logger.info(f"Entry detected: {qty}@{price} at {now}")
+        logger.info(f"[Monitor] Entry detected: {qty}@{price} at {now}")
 
 
 def _poll_price_loop():
+    """
+    단순히 현재 가격과 PnL을 모니터링 state에 매 주기 업데이트합니다.
+    TP/SL 주문은 이 스레드에서 생성하지 않습니다.
+    """
     client = get_binance_client()
-    symbol = monitor_state["symbol"]
 
     while True:
-        qty   = monitor_state["position_qty"]
-        entry = monitor_state["entry_price"]
+        symbol = monitor_state.get("symbol")
+        entry  = monitor_state.get("entry_price", 0.0)
+        qty    = monitor_state.get("position_qty", 0.0)
 
-        if qty > 0 and entry > 0:
-            current     = float(client.futures_symbol_ticker(symbol=symbol)["price"])
-            now         = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-            pnl_percent = (current / entry - 1) * 100
+        if symbol and entry > 0 and qty > 0:
+            try:
+                current     = float(client.futures_symbol_ticker(symbol=symbol)["price"])
+                now         = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                pnl_percent = (current / entry - 1) * 100
 
-            monitor_state["current_price"] = current
-            monitor_state["pnl"]           = pnl_percent
-
-            # 1차 TP: PnL ≥ (TP_RATIO − 1)*100
-            if not monitor_state["first_tp_done"] and pnl_percent >= (TP_RATIO - 1) * 100:
-                tp_qty = qty * 0.3
-                client.futures_create_order(
-                    symbol=symbol,
-                    side="SELL",
-                    type="MARKET",
-                    quantity=tp_qty,
-                    reduceOnly=True
-                )
                 monitor_state.update({
-                    "first_tp_done":  True,
-                    "first_tp_price": current,
-                    "first_tp_qty":   tp_qty,
-                    "first_tp_time":  now,
-                    "first_tp_pnl":   pnl_percent,
-                    "position_qty":   qty - tp_qty
+                    "current_price": current,
+                    "pnl":           pnl_percent,
+                    "last_update":   now
                 })
-                monitor_state["first_tp_count"] += 1
-                monitor_state["daily_pnl"]     += pnl_percent
-                logger.info(f"1차 익절: {tp_qty}@{current} ({pnl_percent:.2f}% at {now})")
-
-            # 2차 TP: PnL ≥ 1.1% (TP_RATIO_SECOND = 1.011)
-            elif monitor_state["first_tp_done"] \
-                 and not monitor_state["second_tp_done"] \
-                 and pnl_percent >= (1.011 - 1) * 100:
-                tp2_qty = monitor_state["position_qty"] * 0.5
-                client.futures_create_order(
-                    symbol=symbol,
-                    side="SELL",
-                    type="MARKET",
-                    quantity=tp2_qty,
-                    reduceOnly=True
-                )
-                monitor_state.update({
-                    "second_tp_done":  True,
-                    "second_tp_price": current,
-                    "second_tp_qty":   tp2_qty,
-                    "second_tp_time":  now,
-                    "second_tp_pnl":   pnl_percent,
-                    "position_qty":    monitor_state["position_qty"] - tp2_qty
-                })
-                monitor_state["second_tp_count"] += 1
-                monitor_state["daily_pnl"]       += pnl_percent
-                logger.info(f"2차 익절: {tp2_qty}@{current} ({pnl_percent:.2f}% at {now})")
-
-            # SL: PnL ≤ -0.5% (or +0.1% after 1차)
-            sl_threshold = - (1 - SL_RATIO) * 100  # SL_RATIO=0.995 → −0.5%
-            if monitor_state["first_tp_done"]:
-                sl_threshold = (1.001 - 1) * 100     # +0.1% 손절 트레일링
-
-            if not monitor_state["sl_done"] and pnl_percent <= sl_threshold:
-                sl_qty = monitor_state["position_qty"]
-                client.futures_create_order(
-                    symbol=symbol,
-                    side="SELL",
-                    type="MARKET",
-                    quantity=sl_qty,
-                    reduceOnly=True
-                )
-                monitor_state.update({
-                    "sl_done":      True,
-                    "sl_price":     current,
-                    "sl_qty":       sl_qty,
-                    "sl_time":      now,
-                    "sl_pnl":       pnl_percent,
-                    "position_qty": 0
-                })
-                monitor_state["sl_count"]  += 1
-                monitor_state["daily_pnl"] += pnl_percent
-                logger.info(f"손절 실행: {sl_qty}@{current} ({pnl_percent:.2f}% at {now})")
+                logger.info(f"[Monitor] {symbol} price {current}, PnL {pnl_percent:.2f}% at {now}")
+            except Exception:
+                logger.exception("[Monitor] Error fetching price")
 
         time.sleep(POLL_INTERVAL)
 
@@ -130,14 +75,15 @@ def start_monitor():
         api_key=client.API_KEY,
         api_secret=client.API_SECRET
     )
+
     try:
         twm.start()
         twm.start_futures_user_socket(callback=_handle_order_update)
-        logger.info("WebsocketManager initialized")
+        logger.info("[Monitor] WebSocket manager started")
     except Exception:
-        logger.exception("WebsocketManager 초기화 실패")
+        logger.exception("[Monitor] Failed to start WebSocket manager")
         return
 
     thread = threading.Thread(target=_poll_price_loop, daemon=True)
     thread.start()
-    logger.info("Price polling thread started")
+    logger.info("[Monitor] Price polling thread started")
