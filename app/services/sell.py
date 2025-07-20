@@ -75,9 +75,9 @@ def execute_sell(symbol: str) -> dict:
             reduceOnly=True, quantity=f"{tp1_q:.{qty_prec}f}"
         )["orderId"]
 
-        # TP2 (-1.1%, 50% of remainder)
+        # TP2 (-1.5%, 50% of remainder)
         rem     = executed_qty - tp1_q
-        tp2_p   = ceil_p(entry_price * 0.989)
+        tp2_p   = ceil_p(entry_price * 0.985)
         tp2_q   = math.floor(rem * 0.50 / step_size) * step_size
         tp2_id  = client.futures_create_order(
             symbol=symbol, side=SIDE_BUY, type=TP_MARKET,
@@ -122,11 +122,11 @@ def execute_sell(symbol: str) -> dict:
                         logger.exception(f"Error relocating SL after TP1: {e}")
                     tp1_active = False
 
-                # TP2 체결 → SL 재배치 (+0.1%) with further reduced qty
+                # TP2 체결 → SL 재배치 (+0.5%) with further reduced qty
                 if tp2_active and tp2_id not in open_ids:
                     try:
                         client.futures_cancel_order(symbol=symbol, orderId=current_sl_id)
-                        new_sl_p = ceil_p(entry_price * 0.999)
+                        new_sl_p = ceil_p(entry_price * 0.995)
                         new_qty = executed_qty - tp1_q - tp2_q
                         new_sl = client.futures_create_order(
                             symbol=symbol, side=SIDE_BUY, type=SL_MARKET,
