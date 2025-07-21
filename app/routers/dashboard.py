@@ -1,14 +1,23 @@
-# app/routers/dashboard.py
-
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
-from app.state import monitor_state
+from typing import Optional
+from app.state import monitor_states, get_state
 
 router = APIRouter()
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard():
-    data        = monitor_state
+async def dashboard(symbol: Optional[str] = None):
+    # 보여줄 심볼을 쿼리 파라미터로 받거나, 저장된 첫 번째 심볼을 기본으로 사용
+    if symbol:
+        sym = symbol.upper().replace('/', '')
+    else:
+        try:
+            sym = next(iter(monitor_states))
+        except StopIteration:
+            raise HTTPException(status_code=404, detail="No symbol data available")
+
+    state = get_state(sym)
+    data        = state
     entry_price = data.get("entry_price", 0.0)
     entry_time  = data.get("entry_time", "-")
     qty         = data.get("position_qty", 0.0)
@@ -37,7 +46,7 @@ async def dashboard():
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>자동매매 대시보드</title>
+  <title>자동매매 대시보드 - {sym}</title>
   <meta http-equiv="refresh" content="3" />
   <style>
     body {{ background:#f0f2f5; font-family: Arial; padding:20px; }}
@@ -50,7 +59,7 @@ async def dashboard():
   </style>
 </head>
 <body>
-  <h1>자동매매 상태 대시보드</h1>
+  <h1>자동매매 상태 대시보드: {sym}</h1>
 
   <div class="card">
     <h2>진입 정보 <span class="{ 'done' if qty>0 else 'pending' }">({ '진행 중' if qty>0 else '미진행'})</span></h2>

@@ -1,3 +1,5 @@
+# app/services/switching.py
+
 import logging
 import time
 from datetime import datetime
@@ -7,7 +9,7 @@ from app.clients.binance_client import get_binance_client
 from app.config import DRY_RUN, POLL_INTERVAL, MAX_WAIT
 from app.services.buy import execute_buy
 from app.services.sell import execute_sell
-from app.state import monitor_state
+from app.state import get_state
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -38,6 +40,7 @@ def _wait_for(symbol: str, target_amt: float) -> bool:
     logger.warning(f"Switch timeout: target {target_amt}, current {current}")
     return False
 
+
 def _cancel_open_reduceonly_orders(symbol: str):
     """⭐ reduceOnly 주문 전부 취소 (TP/SL 잔존 제거용)"""
     client = get_binance_client()
@@ -46,6 +49,7 @@ def _cancel_open_reduceonly_orders(symbol: str):
         if order.get("reduceOnly"):
             client.futures_cancel_order(symbol=symbol, orderId=order["orderId"])
             logger.info(f"[Cleanup] Canceled reduceOnly order {order['orderId']}")
+
 
 def switch_position(symbol: str, action: str) -> dict:
     """
@@ -56,6 +60,7 @@ def switch_position(symbol: str, action: str) -> dict:
     - 포지션 없으면 TP/SL 주문 클린업 ➔ 새 진입
     """
     client = get_binance_client()
+    state = get_state(symbol)
 
     # Dry-run 스킵
     if DRY_RUN:
@@ -63,7 +68,7 @@ def switch_position(symbol: str, action: str) -> dict:
         return {"skipped": "dry_run"}
 
     # 트레이드 카운트 증가
-    monitor_state["trade_count"] += 1
+    state["trade_count"] += 1
 
     # 현재 포지션 조회
     positions = client.futures_position_information(symbol=symbol)
@@ -78,10 +83,10 @@ def switch_position(symbol: str, action: str) -> dict:
         if current_amt > 0:
             return {"skipped": "already_long"}
 
-        # 청산 or 진입 전에 기존 TP/SL 주문 삭제
+        # 신규 진입 전, 기존 TP/SL 오더 삭제
         _cancel_open_reduceonly_orders(symbol)
 
-        # 숏 포지션이 있으면 시장가 청산
+        # 숏 포지션이 있으면 청산
         if current_amt < 0:
             qty = abs(current_amt)
             logger.info(f"Closing SHORT {qty} @ market for {symbol}")
@@ -94,23 +99,20 @@ def switch_position(symbol: str, action: str) -> dict:
             )
             if not _wait_for(symbol, 0.0):
                 return {"skipped": "close_failed"}
-            # 청산 후에도 남아 있을 수 있는 TP/SL 주문 정리
             _cancel_open_reduceonly_orders(symbol)
 
-            # 청산 시 손절 여부 기록
             try:
-                entry_price   = monitor_state.get("entry_price", 0.0)
+                entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
-                pnl = (current_price / entry_price - 1) * 100
-                if pnl < 0:
-                    monitor_state["sl_count"]  += 1
-                    monitor_state["daily_pnl"] += pnl
-                    now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-                    logger.info(f"Stop-loss on switch SHORT→LONG: {pnl:.2f}% at {now}")
+                pnl = (current_price / entry_price - 1)
+                state["capital"] *= (1 + pnl)
+                state["sl_count"] += 1
+                state["daily_pnl"] += pnl * 100
+                now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
             except Exception:
-                logger.exception("Failed to calc SL PnL on short close")
+                logger.exception("Failed to update capital on SL close")
 
-        # 새 롱 진입
         return execute_buy(symbol)
 
     # SELL 신호 처리
@@ -119,10 +121,9 @@ def switch_position(symbol: str, action: str) -> dict:
         if current_amt < 0:
             return {"skipped": "already_short"}
 
-        # 청산 or 진입 전에 기존 TP/SL 주문 삭제
         _cancel_open_reduceonly_orders(symbol)
 
-        # 롱 포지션이 있으면 시장가 청산
+        # 롱 포지션이 있으면 청산
         if current_amt > 0:
             qty = current_amt
             logger.info(f"Closing LONG {qty} @ market for {symbol}")
@@ -135,25 +136,21 @@ def switch_position(symbol: str, action: str) -> dict:
             )
             if not _wait_for(symbol, 0.0):
                 return {"skipped": "close_failed"}
-            # 청산 후 TP/SL 주문 정리
             _cancel_open_reduceonly_orders(symbol)
 
-            # 청산 시 손절 여부 기록
             try:
-                entry_price   = monitor_state.get("entry_price", 0.0)
+                entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
-                pnl = (entry_price / current_price - 1) * 100
-                if pnl < 0:
-                    monitor_state["sl_count"]  += 1
-                    monitor_state["daily_pnl"] += pnl
-                    now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-                    logger.info(f"Stop-loss on switch LONG→SHORT: {pnl:.2f}% at {now}")
+                pnl = (entry_price / current_price - 1)
+                state["capital"] *= (1 + pnl)
+                state["sl_count"] += 1
+                state["daily_pnl"] += pnl * 100
+                now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
             except Exception:
-                logger.exception("Failed to calc SL PnL on long close")
+                logger.exception("Failed to update capital on SL close")
 
-        # 새 숏 진입
         return execute_sell(symbol)
 
-    # 알 수 없는 action
     logger.error(f"Unknown action for switch: {action}")
     return {"skipped": "unknown_action"}

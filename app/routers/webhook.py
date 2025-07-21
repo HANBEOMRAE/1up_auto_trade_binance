@@ -8,16 +8,14 @@ from pydantic import BaseModel
 
 from app.config import DRY_RUN
 from app.services.switching import switch_position
-from app.state import monitor_state
+from app.state import get_state
 
 logger = logging.getLogger("webhook")
 router = APIRouter()
 
-
 class AlertPayload(BaseModel):
     symbol: str   # e.g. "ETH/USDT"
     action: str   # "BUY" or "SELL"
-
 
 @router.post("/webhook")
 async def webhook(payload: AlertPayload):
@@ -38,36 +36,59 @@ async def webhook(payload: AlertPayload):
             logger.info(f"Skipped {action} {sym}: {res['skipped']}")
             return {"status": "skipped", "reason": res["skipped"]}
 
-        # 정상 매매 체결 정보 반영
+        # 상태 객체 가져오기 (심볼별)
+        state = get_state(sym)
         now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
 
+        # 정상 매매 체결 정보 반영
         if action == "BUY":
             info = res.get("buy", {})
             entry = float(info.get("entry", 0))
             qty   = float(info.get("filled", 0))
-
-            monitor_state.update({
-                "symbol":        sym,
+            state.update({
                 "entry_price":   entry,
                 "position_qty":  qty,
                 "entry_time":    now,
                 "first_tp_done":  False,
                 "second_tp_done": False,
                 "sl_done":        False,
+                # reset TP/SL details
+                "first_tp_price":    0.0,
+                "first_tp_qty":      0.0,
+                "first_tp_time":     "",
+                "first_tp_pnl":      0.0,
+                "second_tp_price":   0.0,
+                "second_tp_qty":     0.0,
+                "second_tp_time":    "",
+                "second_tp_pnl":     0.0,
+                "sl_price":          0.0,
+                "sl_qty":            0.0,
+                "sl_time":           "",
+                "sl_pnl":            0.0
             })
-
         else:  # SELL
             info = res.get("sell", {})
             entry = float(info.get("entry", 0))
-
-            monitor_state.update({
-                "symbol":        sym,
+            state.update({
                 "entry_price":   entry,
-                "position_qty":  0.0,     # 숏은 모니터에서 qty=0 처리
+                "position_qty":  0.0,
                 "entry_time":    now,
                 "first_tp_done":  False,
                 "second_tp_done": False,
                 "sl_done":        False,
+                # reset TP/SL details
+                "first_tp_price":    0.0,
+                "first_tp_qty":      0.0,
+                "first_tp_time":     "",
+                "first_tp_pnl":      0.0,
+                "second_tp_price":   0.0,
+                "second_tp_qty":     0.0,
+                "second_tp_time":    "",
+                "second_tp_pnl":     0.0,
+                "sl_price":          0.0,
+                "sl_qty":            0.0,
+                "sl_time":           "",
+                "sl_pnl":            0.0
             })
 
     except Exception as e:
