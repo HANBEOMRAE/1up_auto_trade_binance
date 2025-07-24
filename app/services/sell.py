@@ -1,3 +1,5 @@
+# app/services/sell.py
+
 import logging
 import math
 import threading
@@ -29,7 +31,6 @@ def execute_sell(symbol: str) -> dict:
             try:
                 return client.futures_create_order(**kwargs)
             except BinanceAPIException as e:
-                # 과부하 에러일 경우 재시도
                 if getattr(e, 'code', None) == -1008:
                     wait = 0.5 * (2 ** attempt)
                     logger.warning(f"Overloaded; retrying entry in {wait:.1f}s (attempt {attempt+1}/5)")
@@ -87,9 +88,16 @@ def execute_sell(symbol: str) -> dict:
             symbol=symbol, side=SIDE_SELL,
             type=ORDER_TYPE_MARKET, quantity=qty_str
         )
-        details      = client.futures_get_order(symbol=symbol, orderId=order["orderId"])
-        entry_price  = float(details["avgPrice"])
-        executed_qty = float(details["executedQty"])
+
+        # ▶ MARKET 주문 결과에서 직접 체결 정보 파싱
+        fills = order.get("fills", [])
+        if fills:
+            executed_qty = sum(float(f["qty"]) for f in fills)
+            entry_price  = sum(float(f["price"]) * float(f["qty"]) for f in fills) / executed_qty
+        else:
+            entry_price  = float(order.get("avgPrice", 0)) or mark_price
+            executed_qty = float(order.get("executedQty", 0)) or qty
+
         logger.info(f"Entry SHORT: {executed_qty}@{entry_price}")
 
         # 4) TP1/TP2/SL 주문
@@ -173,15 +181,17 @@ def execute_sell(symbol: str) -> dict:
 
                 # SL 체결 감지: positionAmt == 0 시 모니터 종료
                 pos = client.futures_position_information(symbol=symbol)
-                amt = next((float(p["positionAmt"]) for p in pos if p["symbol"]==symbol), 0.0)
+                amt = next((float(p["positionAmt"]) for p in pos if p["symbol"] == symbol), 0.0)
                 if amt == 0:
                     logger.info("SL hit → position closed")
                     break
 
         threading.Thread(target=_monitor, daemon=True).start()
 
-        return {"sell": {"filled": executed_qty, "entry": entry_price},
-                "orders": {"tp1": tp1_id, "tp2": tp2_id, "sl": sl_id}}
+        return {
+            "sell":   {"filled": executed_qty, "entry": entry_price},
+            "orders": {"tp1": tp1_id, "tp2": tp2_id, "sl": sl_id}
+        }
 
     except BinanceAPIException as e:
         logger.error(f"Sell order failed: {e}")
