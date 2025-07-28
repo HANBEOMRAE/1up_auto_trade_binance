@@ -155,12 +155,12 @@ def execute_buy(symbol: str) -> dict:
                     for o in client.futures_get_open_orders(symbol=symbol)
                 }
 
-                # TP1 체결 → SL 재배치 (+0.1%)
+                # TP1 체결 → SL 재배치 (-0.5%)
                 if tp1_id and tp1_active and tp1_id not in open_ids:
                     client.futures_cancel_order(
                         symbol=symbol, orderId=current_sl_id
                     )
-                    new_sl_p = ceil_p(entry_price * 1.001)
+                    new_sl_p = ceil_p(entry_price * 0.995)
                     new_qty  = executed_qty - tp1_q
                     new_sl   = ensure_order(
                         "SL_after_TP1",
@@ -174,12 +174,12 @@ def execute_buy(symbol: str) -> dict:
                     )
                     tp1_active = False
 
-                # TP2 체결 → SL 재배치 (+0.5%)
+                # TP2 체결 → SL 재배치 (+0.3%)
                 if tp2_id and tp2_active and tp2_id not in open_ids:
                     client.futures_cancel_order(
                         symbol=symbol, orderId=current_sl_id
                     )
-                    new_sl_p = ceil_p(entry_price * 1.005)
+                    new_sl_p = ceil_p(entry_price * 1.003)
                     new_qty  = executed_qty - tp1_q - tp2_q
                     new_sl   = ensure_order(
                         "SL_after_TP2",

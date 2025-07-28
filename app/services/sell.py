@@ -149,10 +149,10 @@ def execute_sell(symbol: str) -> dict:
                 time.sleep(POLL_INTERVAL)
                 open_ids = {o["orderId"] for o in client.futures_get_open_orders(symbol=symbol)}
 
-                # TP1 체결 → SL 재배치 (-0.1%)
+                # TP1 체결 → SL 재배치 (+0.5%)
                 if tp1_id and tp1_active and tp1_id not in open_ids:
                     client.futures_cancel_order(symbol=symbol, orderId=current_sl_id)
-                    new_sl_p = ceil_p(entry_price * 0.999)
+                    new_sl_p = ceil_p(entry_price * 1.005)
                     new_qty  = executed_qty - tp1_q
                     new_sl   = ensure_order(
                         "SL_after_TP1",
@@ -164,10 +164,10 @@ def execute_sell(symbol: str) -> dict:
                     logger.info(f"Moved SL to -0.1% @ {new_sl_p} for qty {new_qty}")
                     tp1_active = False
 
-                # TP2 체결 → SL 재배치 (-0.5%)
+                # TP2 체결 → SL 재배치 (-0.3%)
                 if tp2_id and tp2_active and tp2_id not in open_ids:
                     client.futures_cancel_order(symbol=symbol, orderId=current_sl_id)
-                    new_sl_p = ceil_p(entry_price * 0.995)
+                    new_sl_p = ceil_p(entry_price * 0.997)
                     new_qty  = executed_qty - tp1_q - tp2_q
                     new_sl   = ensure_order(
                         "SL_after_TP2",
