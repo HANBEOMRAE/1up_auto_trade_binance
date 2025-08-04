@@ -45,7 +45,7 @@ def execute_buy(symbol: str) -> dict:
             try:
                 return client.futures_create_order(**kwargs)
             except BinanceAPIException as e:
-                if getattr(e, "code", None) == -1008:
+                if getattr(e, 'code', None) == -1008:
                     logger.warning(f"{description} overloaded; retrying in 1s")
                     time.sleep(1)
                     continue
@@ -119,10 +119,10 @@ def execute_buy(symbol: str) -> dict:
         )
         tp1_id   = tp1_res["orderId"] if tp1_res else None
 
-        # TP2 (+1.5%, 30% of remainder)
+        # TP2 (+1.2%, 40% of remainder)
         rem      = executed_qty - tp1_q
-        tp2_p    = ceil_p(entry_price * 1.015)
-        tp2_q    = math.floor(rem * 0.30 / step_size) * step_size
+        tp2_p    = ceil_p(entry_price * 1.012)
+        tp2_q    = math.floor(rem * 0.40 / step_size) * step_size
         tp2_res  = ensure_order(
             "TP2",
             symbol=symbol, side=SIDE_SELL, type=TP_MARKET,
@@ -155,12 +155,20 @@ def execute_buy(symbol: str) -> dict:
                     for o in client.futures_get_open_orders(symbol=symbol)
                 }
 
-                # TP1 체결 → SL 재배치 (-0.5%)
+                # TP1 체결 → SL 재배치 (+0.1%) 및 상태 반영
                 if tp1_id and tp1_active and tp1_id not in open_ids:
+                    try:
+                        pnl = (tp1_p - entry_price) / entry_price
+                        state["first_tp_count"] = state.get("first_tp_count", 0) + 1
+                        state["daily_pnl"] = state.get("daily_pnl", 0.0) + pnl * 100
+                        state["first_tp_done"] = True
+                    except Exception:
+                        logger.exception("Failed to update state for TP1 (long)")
+
                     client.futures_cancel_order(
                         symbol=symbol, orderId=current_sl_id
                     )
-                    new_sl_p = ceil_p(entry_price * 0.995)
+                    new_sl_p = ceil_p(entry_price * 1.001)
                     new_qty  = executed_qty - tp1_q
                     new_sl   = ensure_order(
                         "SL_after_TP1",
@@ -174,12 +182,20 @@ def execute_buy(symbol: str) -> dict:
                     )
                     tp1_active = False
 
-                # TP2 체결 → SL 재배치 (+0.3%)
+                # TP2 체결 → SL 재배치 (+0.5%) 및 상태 반영
                 if tp2_id and tp2_active and tp2_id not in open_ids:
+                    try:
+                        pnl = (tp2_p - entry_price) / entry_price
+                        state["second_tp_count"] = state.get("second_tp_count", 0) + 1
+                        state["daily_pnl"] = state.get("daily_pnl", 0.0) + pnl * 100
+                        state["second_tp_done"] = True
+                    except Exception:
+                        logger.exception("Failed to update state for TP2 (long)")
+
                     client.futures_cancel_order(
                         symbol=symbol, orderId=current_sl_id
                     )
-                    new_sl_p = ceil_p(entry_price * 1.003)
+                    new_sl_p = ceil_p(entry_price * 1.005)
                     new_qty  = executed_qty - tp1_q - tp2_q
                     new_sl   = ensure_order(
                         "SL_after_TP2",
@@ -193,12 +209,23 @@ def execute_buy(symbol: str) -> dict:
                     )
                     tp2_active = False
 
-                # SL 체결 감지: positionAmt == 0 시 모니터 종료
+                # SL 체결 감지: positionAmt == 0 시 (익절 없이) 손절 처리
                 pos = client.futures_position_information(symbol=symbol)
                 amt = next(
                     (float(p["positionAmt"]) for p in pos if p["symbol"] == symbol), 0.0
                 )
                 if amt == 0:
+                    try:
+                        if not state.get("first_tp_done", False) and not state.get("second_tp_done", False):
+                            current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
+                            pnl = (current_price - entry_price) / entry_price  # long 손절
+                            state["sl_count"] = state.get("sl_count", 0) + 1
+                            state["daily_pnl"] = state.get("daily_pnl", 0.0) + pnl * 100
+                            state["sl_done"] = True
+                            logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied (long final).")
+                    except Exception:
+                        logger.exception("Failed to update state for SL (long)")
+
                     logger.info("SL hit → position closed")
                     break
 

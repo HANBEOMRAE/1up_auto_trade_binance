@@ -67,9 +67,6 @@ def switch_position(symbol: str, action: str) -> dict:
         logger.info(f"[DRY_RUN] switch_position {action} {symbol}")
         return {"skipped": "dry_run"}
 
-    # 트레이드 카운트 증가
-    state["trade_count"] += 1
-
     # 현재 포지션 조회
     positions = client.futures_position_information(symbol=symbol)
     current_amt = next(
@@ -82,6 +79,9 @@ def switch_position(symbol: str, action: str) -> dict:
         # 이미 롱 포지션이면 스킵 (TP/SL 유지)
         if current_amt > 0:
             return {"skipped": "already_long"}
+
+        # 트레이드 카운트 증가 (실제로 진입/전환이 일어나는 경우)
+        state["trade_count"] += 1
 
         # 신규 진입 전, 기존 TP/SL 오더 삭제
         _cancel_open_reduceonly_orders(symbol)
@@ -105,11 +105,16 @@ def switch_position(symbol: str, action: str) -> dict:
                 entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
                 pnl = (current_price / entry_price - 1)
-                state["capital"] *= (1 + pnl)
-                state["sl_count"] += 1
-                state["daily_pnl"] += pnl * 100
-                now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
+                # TP1/TP2 이미 체결된 상태면 손절로 처리하지 않음
+                if not state.get("first_tp_done", False) and not state.get("second_tp_done", False):
+                    state["capital"] *= (1 + pnl)
+                    state["sl_count"] += 1
+                    state["daily_pnl"] += pnl * 100
+                    state["sl_done"] = True
+                    now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                    logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
+                else:
+                    logger.info(f"[{symbol}] Skipped SL count because TP already done before switch.")
             except Exception:
                 logger.exception("Failed to update capital on SL close")
 
@@ -120,6 +125,9 @@ def switch_position(symbol: str, action: str) -> dict:
         # 이미 숏 포지션이면 스킵
         if current_amt < 0:
             return {"skipped": "already_short"}
+
+        # 트레이드 카운트 증가
+        state["trade_count"] += 1
 
         _cancel_open_reduceonly_orders(symbol)
 
@@ -142,11 +150,16 @@ def switch_position(symbol: str, action: str) -> dict:
                 entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
                 pnl = (entry_price / current_price - 1)
-                state["capital"] *= (1 + pnl)
-                state["sl_count"] += 1
-                state["daily_pnl"] += pnl * 100
-                now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
+                # TP1/TP2 이미 체결된 상태면 손절로 처리하지 않음
+                if not state.get("first_tp_done", False) and not state.get("second_tp_done", False):
+                    state["capital"] *= (1 + pnl)
+                    state["sl_count"] += 1
+                    state["daily_pnl"] += pnl * 100
+                    state["sl_done"] = True
+                    now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                    logger.info(f"[{symbol}] SL PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f} at {now}")
+                else:
+                    logger.info(f"[{symbol}] Skipped SL count because TP already done before switch.")
             except Exception:
                 logger.exception("Failed to update capital on SL close")
 
