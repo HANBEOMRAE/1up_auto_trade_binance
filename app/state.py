@@ -14,7 +14,7 @@ def _default_state(symbol: str) -> dict:
     now_str = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
     return {
         "symbol":         symbol,
-        "capital":        50.0,       # 초기 자본 $50
+        "capital":        100.0,       # 초기 자본 $100
 
         # 진입 정보
         "entry_price":    0.0,
