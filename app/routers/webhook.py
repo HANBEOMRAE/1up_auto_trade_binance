@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import DRY_RUN
-from app.services.switching import switch_position
+from app.services.switching import switch_position, switch_position2
 from app.state import get_state
+from app.services.simple_buy import execute_simple_buy
+from app.services.simple_sell import execute_simple_sell
 
 logger = logging.getLogger("webhook")
 router = APIRouter()
@@ -93,6 +95,29 @@ async def webhook(payload: AlertPayload):
 
     except Exception as e:
         logger.exception(f"Error processing {action} for {sym}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "ok", "result": res}
+
+@router.post("/webhook2")
+async def webhook2(payload: AlertPayload):
+    sym    = payload.symbol.upper().replace("/", "")
+    action = payload.action.upper()
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym}")
+        return {"status": "dry_run"}
+
+    try:
+        # ✅ 스위칭 수행 (기존 포지션 청산 후 진입)
+        res = switch_position2(sym, action)
+
+        if "skipped" in res:
+            logger.info(f"Skipped {action} {sym}: {res['skipped']}")
+            return {"status": "skipped", "reason": res["skipped"]}
+
+    except Exception as e:
+        logger.exception(f"Error switching in webhook2 for {action} {sym}")
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "ok", "result": res}
