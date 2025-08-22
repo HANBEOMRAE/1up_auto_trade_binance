@@ -182,31 +182,24 @@ def switch_position2(symbol: str, action: str) -> dict:
     client = get_binance_client()
     state = get_state(symbol)
 
-    # Dry-run 스킵
     if DRY_RUN:
         logger.info(f"[DRY_RUN] switch_position {action} {symbol}")
         return {"skipped": "dry_run"}
 
-    # 현재 포지션 조회
     positions = client.futures_position_information(symbol=symbol)
     current_amt = next(
         (float(p["positionAmt"]) for p in positions if p["symbol"] == symbol),
         0.0
     )
 
-    # BUY 신호 처리
+    # === BUY 시도 ===
     if action.upper() == "BUY":
-        # 이미 롱 포지션이면 스킵 (TP/SL 유지)
         if current_amt > 0:
             return {"skipped": "already_long"}
 
-        # 트레이드 카운트 증가 (실제로 진입/전환이 일어나는 경우)
         state["trade_count"] += 1
-
-        # 신규 진입 전, 기존 TP/SL 오더 삭제
         _cancel_open_reduceonly_orders(symbol)
 
-        # 숏 포지션이 있으면 청산
         if current_amt < 0:
             qty = abs(current_amt)
             logger.info(f"Closing SHORT {qty} @ market for {symbol}")
@@ -225,7 +218,7 @@ def switch_position2(symbol: str, action: str) -> dict:
                 entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
                 pnl = (current_price / entry_price - 1)
-                # TP1/TP2 이미 체결된 상태면 손절로 처리하지 않음
+
                 if not state.get("first_tp_done", False) and not state.get("second_tp_done", False):
                     state["capital"] *= (1 + pnl)
                     state["sl_count"] += 1
@@ -238,20 +231,27 @@ def switch_position2(symbol: str, action: str) -> dict:
             except Exception:
                 logger.exception("Failed to update capital on SL close")
 
+            # 💰 포지션 청산 후 실제 자본 재조회
+            try:
+                account = client.futures_account_balance()
+                usdt_balance = next((a for a in account if a["asset"] == "USDT"), None)
+                if usdt_balance:
+                    new_capital = float(usdt_balance["availableBalance"])
+                    state["capital"] = new_capital
+                    logger.info(f"[{symbol}] Capital updated after SHORT close: ${new_capital:.2f}")
+            except Exception:
+                logger.exception("Failed to refresh capital after SHORT close")
+
         return execute_simple_buy(symbol)
 
-    # SELL 신호 처리
+    # === SELL 시도 ===
     if action.upper() == "SELL":
-        # 이미 숏 포지션이면 스킵
         if current_amt < 0:
             return {"skipped": "already_short"}
 
-        # 트레이드 카운트 증가
         state["trade_count"] += 1
-
         _cancel_open_reduceonly_orders(symbol)
 
-        # 롱 포지션이 있으면 청산
         if current_amt > 0:
             qty = current_amt
             logger.info(f"Closing LONG {qty} @ market for {symbol}")
@@ -270,7 +270,7 @@ def switch_position2(symbol: str, action: str) -> dict:
                 entry_price = state.get("entry_price", 0.0)
                 current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
                 pnl = (entry_price / current_price - 1)
-                # TP1/TP2 이미 체결된 상태면 손절로 처리하지 않음
+
                 if not state.get("first_tp_done", False) and not state.get("second_tp_done", False):
                     state["capital"] *= (1 + pnl)
                     state["sl_count"] += 1
@@ -282,6 +282,17 @@ def switch_position2(symbol: str, action: str) -> dict:
                     logger.info(f"[{symbol}] Skipped SL count because TP already done before switch.")
             except Exception:
                 logger.exception("Failed to update capital on SL close")
+
+            # 💰 포지션 청산 후 실제 자본 재조회
+            try:
+                account = client.futures_account_balance()
+                usdt_balance = next((a for a in account if a["asset"] == "USDT"), None)
+                if usdt_balance:
+                    new_capital = float(usdt_balance["availableBalance"])
+                    state["capital"] = new_capital
+                    logger.info(f"[{symbol}] Capital updated after LONG close: ${new_capital:.2f}")
+            except Exception:
+                logger.exception("Failed to refresh capital after LONG close")
 
         return execute_simple_sell(symbol)
 
