@@ -1,5 +1,3 @@
-# app/services/simple_sell.py
-
 import logging
 import math
 from binance.enums import SIDE_SELL, ORDER_TYPE_MARKET
@@ -22,12 +20,11 @@ def execute_simple_sell(symbol: str):
         # 1) 레버리지 설정
         client.futures_change_leverage(symbol=symbol, leverage=TRADE_LEVERAGE)
 
-        # 2) 자본 및 수량 계산
+        # 2) 자본 및 마크가격
         capital    = state.get("capital", 0.0)
         mark_price = float(client.futures_mark_price(symbol=symbol)["markPrice"])
-        quantity   = (capital * 0.98 * TRADE_LEVERAGE) / mark_price
 
-        # 3) precision 계산
+        # 3) 심볼 세부 정보 (precision, minQty 등)
         info     = client.futures_exchange_info()
         sym_info = next(s for s in info["symbols"] if s["symbol"] == symbol)
         lot_f    = next(f for f in sym_info["filters"] if f["filterType"] == "LOT_SIZE")
@@ -35,12 +32,39 @@ def execute_simple_sell(symbol: str):
         min_qty  = float(lot_f["minQty"])
         qty_prec = int(round(-math.log10(step), 0))
 
-        qty = math.floor(quantity / step) * step
-        if qty < min_qty:
-            logger.warning(f"Qty {qty} < minQty {min_qty}. Skip SELL.")
-            return {"skipped": "quantity_too_low"}
+        # 4) 최소 필요 자본 계산
+        min_required_capital = (min_qty * mark_price) / TRADE_LEVERAGE
+        if capital < min_required_capital:
+            logger.warning(
+                f"[{symbol}] Capital ${capital:.2f} too low for minQty {min_qty}. "
+                f"Required: ${min_required_capital:.2f} (mark: {mark_price})"
+            )
+            return {
+                "skipped": "capital_too_low",
+                "required_capital": round(min_required_capital, 4),
+                "current_capital": capital,
+                "mark_price": mark_price,
+                "min_qty": min_qty,
+                "leverage": TRADE_LEVERAGE
+            }
 
-        # 4) 시장가 매도 주문
+        # 5) 수량 계산
+        quantity = (capital * 0.98 * TRADE_LEVERAGE) / mark_price
+        qty = math.floor(quantity / step) * step
+
+        # 6) 최소 수량 확인
+        if qty < min_qty:
+            logger.warning(f"[{symbol}] Qty {qty} < minQty {min_qty}. Skip SELL.")
+            return {
+                "skipped": "quantity_too_low",
+                "qty": qty,
+                "min_qty": min_qty,
+                "mark_price": mark_price,
+                "capital": capital,
+                "suggestion": "Increase capital or leverage"
+            }
+
+        # 7) 시장가 매도
         qty_str = f"{qty:.{qty_prec}f}"
         order = client.futures_create_order(
             symbol=symbol, side=SIDE_SELL,
