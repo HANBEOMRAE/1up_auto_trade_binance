@@ -1,5 +1,3 @@
-# ✅ 수정된 buy.py
-
 import logging
 import math
 from fastapi import HTTPException
@@ -12,7 +10,7 @@ from app.state import get_state
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-def execute_buy(symbol: str) -> dict:
+def execute_buy(symbol: str, leverage: int = None) -> dict:
     client = get_binance_client()
     state = get_state(symbol)
 
@@ -20,13 +18,16 @@ def execute_buy(symbol: str) -> dict:
         logger.info(f"[DRY_RUN] BUY {symbol}")
         return {"skipped": "dry_run"}
 
-    client.futures_change_leverage(symbol=symbol, leverage=TRADE_LEVERAGE)
+    # ✅ 레버리지 설정 (우선순위: 인자 > 설정값)
+    leverage_to_use = leverage or TRADE_LEVERAGE
+    client.futures_change_leverage(symbol=symbol, leverage=leverage_to_use)
 
     capital = state.get("capital", 0.0)
     mark_price = float(client.futures_mark_price(symbol=symbol)["markPrice"])
-    allocation = capital * 0.98 * TRADE_LEVERAGE
+    allocation = capital * 0.98 * leverage_to_use
     raw_qty = allocation / mark_price
 
+    # 거래 수량 계산
     info = client.futures_exchange_info()
     sym_info = next(s for s in info["symbols"] if s["symbol"] == symbol)
     lot_f = next(f for f in sym_info["filters"] if f["filterType"] == "LOT_SIZE")
@@ -39,15 +40,32 @@ def execute_buy(symbol: str) -> dict:
         raise HTTPException(status_code=400, detail=f"Qty {qty} < minQty {min_qty}")
 
     qty_str = f"{qty:.{qty_prec}f}"
+
+    # ✅ 주문 생성
     order = client.futures_create_order(
-        symbol=symbol, side=SIDE_BUY,
-        type=ORDER_TYPE_MARKET, quantity=qty_str
+        symbol=symbol,
+        side=SIDE_BUY,
+        type=ORDER_TYPE_MARKET,
+        quantity=qty_str
     )
 
-    entry = float(order.get("avgPrice") or mark_price)
+    # ✅ 주문 상세 재조회 → avgPrice 보정
+    order_id = order.get("orderId")
+    try:
+        filled_order = client.futures_get_order(symbol=symbol, orderId=order_id)
+        entry = float(filled_order.get("avgPrice") or mark_price)
+    except Exception as e:
+        logger.warning(f"[BUY] Failed to fetch avgPrice via orderId {order_id}: {e}")
+        entry = mark_price
+
     logger.info(f"[BUY] {symbol} {qty}@{entry}")
+
+    # 상태 저장
     state.update({
         "entry_price": entry,
-        "position_qty": qty
+        "position_qty": qty,
+        "current_price": entry,
+        "position_side": "long"
     })
+
     return {"buy": {"filled": qty, "entry": entry}}

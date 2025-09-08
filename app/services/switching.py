@@ -39,7 +39,7 @@ def _cancel_open_reduceonly_orders(symbol: str):
             client.futures_cancel_order(symbol=symbol, orderId=order["orderId"])
             logger.info(f"[Cleanup] Canceled reduceOnly order {order['orderId']}")
 
-def switch_position(symbol: str, action: str) -> dict:
+def switch_position(symbol: str, action: str, leverage: int = None) -> dict:
     client = get_binance_client()
     state = get_state(symbol)
 
@@ -60,7 +60,7 @@ def switch_position(symbol: str, action: str) -> dict:
             symbol=symbol,
             side=SIDE_SELL,
             type=ORDER_TYPE_MARKET,
-            quantity=current_amt,
+            quantity=abs(current_amt),
             reduceOnly=True
         )
         _wait_for(symbol, 0.0)
@@ -99,7 +99,7 @@ def switch_position(symbol: str, action: str) -> dict:
             _wait_for(symbol, 0.0)
             _cancel_open_reduceonly_orders(symbol)
             _update_capital_after_exit(symbol, long_exit=False)
-        return execute_buy(symbol)
+        return execute_buy(symbol, leverage=leverage)
 
     # === SELL ===
     if action.upper() == "SELL":
@@ -117,7 +117,7 @@ def switch_position(symbol: str, action: str) -> dict:
             _wait_for(symbol, 0.0)
             _cancel_open_reduceonly_orders(symbol)
             _update_capital_after_exit(symbol, long_exit=True)
-        return execute_sell(symbol)
+        return execute_sell(symbol, leverage=leverage)
 
     logger.error(f"Unknown action for switch: {action}")
     return {"skipped": "unknown_action"}
@@ -127,14 +127,23 @@ def _update_capital_after_exit(symbol: str, long_exit: bool):
     state = get_state(symbol)
     try:
         entry_price = state.get("entry_price", 0.0)
-        current_price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
-        if entry_price == 0:
-            logger.warning(f"[{symbol}] No entry_price found. Skipping capital update.")
+        position_qty = abs(state.get("position_qty", 0.0))
+        if entry_price == 0 or position_qty == 0:
+            logger.warning(f"[{symbol}] No entry_price or qty found. Skipping capital update.")
             return
 
-        pnl = (current_price / entry_price - 1) if long_exit else (entry_price / current_price - 1)
+        mark_price = float(client.futures_mark_price(symbol=symbol)["markPrice"])
+        exit_price = mark_price
+
+        pnl = (exit_price / entry_price - 1) if long_exit else (entry_price / exit_price - 1)
+        capital_before = state["capital"]
         state["capital"] *= (1 + pnl)
         state["daily_pnl"] += pnl * 100
-        logger.info(f"[{symbol}] PnL {pnl*100:.2f}% applied. New capital: ${state['capital']:.2f}")
+        state["entry_price"] = 0.0
+        state["position_qty"] = 0.0
+
+        logger.info(f"[{symbol}] Exit @ {exit_price:.4f}, Entry @ {entry_price:.4f}, PnL {pnl*100:.2f}%")
+        logger.info(f"[{symbol}] Capital ${capital_before:.2f} → ${state['capital']:.2f}")
+
     except Exception:
         logger.exception(f"[{symbol}] Failed to update capital after exit")
