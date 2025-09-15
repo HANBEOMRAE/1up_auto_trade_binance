@@ -60,12 +60,13 @@ def execute_buy(symbol: str, leverage: int = None) -> dict:
 
     logger.info(f"[BUY] {symbol} {qty}@{entry}")
 
-    # 상태 저장
+    # 상태 저장 (레버리지 포함)
     state.update({
         "entry_price": entry,
         "position_qty": qty,
         "current_price": entry,
-        "position_side": "long"
+        "position_side": "long",
+        "leverage": leverage_to_use
     })
 
     return {"buy": {"filled": qty, "entry": entry}}

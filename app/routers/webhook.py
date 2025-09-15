@@ -1,5 +1,3 @@
-# ✅ webhook.py (전체 수정 버전: /webhook 용)
-
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -57,11 +55,17 @@ async def webhook(payload: AlertPayload):
             })
 
         elif action in ("BUY_STOP", "SELL_STOP"):
+            # ✅ exit_price / pnl 로그 찍기
+            exit_price = res.get("exit_price", 0.0)
+            pnl        = res.get("pnl", 0.0)
+
             state.update({
                 "entry_price":   0.0,
                 "position_qty":  0.0,
                 "entry_time":    now
             })
+
+            logger.info(f"[{action}] {sym} EXIT @ {exit_price}, PnL {pnl:.2f}%")
 
     except Exception as e:
         logger.exception(f"Error processing {action} for {sym}")
@@ -70,13 +74,13 @@ async def webhook(payload: AlertPayload):
     return {"status": "ok", "result": res}
 
 
-# ✅ webhook2는 그대로 유지
+# ✅ webhook2는 동일 (단, 필요 시 같은 방식으로 STOP 로그 추가 가능)
 @router.post("/webhook2")
 async def webhook2(payload: AlertPayload):
     sym    = payload.symbol.upper().replace("/", "")
     action = payload.action.upper()
 
-    # 👉 여기에 원하는 커스텀 레버리지 설정
+    # 👉 원하는 커스텀 레버리지 설정
     custom_leverage = 10
 
     if DRY_RUN:
@@ -84,14 +88,12 @@ async def webhook2(payload: AlertPayload):
         return {"status": "dry_run"}
 
     try:
-        # 👉 커스텀 레버리지 넘겨서 포지션 처리
         res = switch_position(sym, action, leverage=custom_leverage)
 
         if "skipped" in res:
             logger.info(f"Skipped {action} {sym}: {res['skipped']}")
             return {"status": "skipped", "reason": res["skipped"]}
 
-        # 👉 state 업데이트도 action별로 동일하게 반영해야 복리 추적 됨
         state = get_state(sym)
         now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -116,11 +118,16 @@ async def webhook2(payload: AlertPayload):
             })
 
         elif action in ("BUY_STOP", "SELL_STOP"):
+            exit_price = res.get("exit_price", 0.0)
+            pnl        = res.get("pnl", 0.0)
+
             state.update({
                 "entry_price":   0.0,
                 "position_qty":  0.0,
                 "entry_time":    now
             })
+
+            logger.info(f"[{action}] {sym} EXIT @ {exit_price}, PnL {pnl:.2f}%")
 
     except Exception as e:
         logger.exception(f"Error switching in webhook2 for {action} {sym}")

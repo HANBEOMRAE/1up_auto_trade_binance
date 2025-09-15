@@ -59,12 +59,13 @@ def execute_sell(symbol: str, leverage: int = None) -> dict:
 
     logger.info(f"[SELL] {symbol} {qty}@{entry}")
 
-    # 상태 저장
+    # 상태 저장 (레버리지 포함)
     state.update({
         "entry_price": entry,
         "position_qty": -qty,
         "current_price": entry,
-        "position_side": "short"
+        "position_side": "short",
+        "leverage": leverage_to_use
     })
 
     return {"sell": {"filled": qty, "entry": entry}}
