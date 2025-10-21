@@ -12,7 +12,6 @@ logger = logging.getLogger("report")
 
 
 def _compute_period_date(now: datetime) -> str:
-    # 09시 이전이면 어제, 이후면 오늘
     if now.hour >= 9:
         return now.strftime("%Y-%m-%d")
     else:
@@ -20,19 +19,28 @@ def _compute_period_date(now: datetime) -> str:
         return prev.strftime("%Y-%m-%d")
 
 
+def _calculate_cumulative_return(current_capital: float, initial_capital: float) -> float:
+    if initial_capital == 0:
+        return 0.0
+    return round(((current_capital / initial_capital) - 1.0) * 100, 2)
+
+
 def _build_single_report(sym: str) -> dict:
     state = get_state(sym)
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     period_date = _compute_period_date(now)
 
+    capital = state.get("capital", 0.0)
+    initial = state.get("initial_capital", 1.0)
+
     return {
         "symbol":           sym,
         "period":           period_date,
         "total_trades":     state.get("trade_count", 0),
-        "1차_익절횟수":      state.get("first_tp_count", 0),
-        "2차_익절횟수":      state.get("second_tp_count", 0),
-        "손절횟수":         state.get("sl_count", 0),
-        "총_수익률(%)":     round(state.get("daily_pnl", 0.0), 2),
+        "long_entries":     state.get("long_count", 0),
+        "short_entries":    state.get("short_count", 0),
+        "현재_자본($)":     round(capital, 2),
+        "복리_수익률(%)":    _calculate_cumulative_return(capital, initial),
         "last_reset":       state.get("last_reset", None),
     }
 
@@ -42,17 +50,11 @@ async def report(
     symbol: str = Query(None, description="조회할 심볼 (예: ETH/USDT 또는 ETHUSDT)"),
     all: bool = Query(False, description="모든 심볼에 대해 리포트 반환")
 ):
-    """
-    리포트 조회 (리셋 없음)
-    """
     if all:
-        reports = []
-        for sym in monitor_states.keys():
-            reports.append(_build_single_report(sym))
+        reports = [_build_single_report(sym) for sym in monitor_states]
         logger.info(f"Report all symbols: count={len(reports)}")
         return JSONResponse({"reports": reports})
 
-    # 단일 심볼
     if symbol:
         sym = symbol.upper().replace("/", "")
         if sym not in monitor_states:
@@ -72,9 +74,6 @@ async def report(
 async def reset_report(
     symbol: str = Query(..., description="리셋할 심볼 (예: ETH/USDT 또는 ETHUSDT)")
 ):
-    """
-    해당 심볼의 집계 상태를 초기화한다. (조회와 분리되어 있어 명시적 호출 필요)
-    """
     sym = symbol.upper().replace("/", "")
     if sym not in monitor_states:
         raise HTTPException(status_code=404, detail=f"No data for symbol {sym}")
@@ -83,13 +82,14 @@ async def reset_report(
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     period_date = _compute_period_date(now)
 
-    # 초기화
+    # 리셋 시 현재 자본을 기준으로 초기 자본 갱신
+    capital_now = state.get("capital", 30.0)
     state.update({
         "trade_count":     0,
-        "first_tp_count":  0,
-        "second_tp_count": 0,
-        "sl_count":        0,
+        "long_count":      0,
+        "short_count":     0,
         "daily_pnl":       0.0,
+        "initial_capital": capital_now,
         "last_reset":      period_date
     })
 

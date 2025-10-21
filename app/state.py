@@ -23,9 +23,11 @@ def _default_state(symbol: str) -> dict:
         "pnl":            0.0,
 
         # 일일 정산용
-        "trade_count":    0,
-        "daily_pnl":      0.0,
-        "last_reset":     now_str,
+        "trade_count":     0,
+        "long_count":      0,
+        "short_count":     0,
+        "initial_capital": 100.0,  # 처음 기준 자본 (수익률 계산용)
+        "last_reset":      now_str,
     }
 
 

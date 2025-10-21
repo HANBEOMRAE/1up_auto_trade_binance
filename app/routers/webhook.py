@@ -88,7 +88,7 @@ async def webhook2(payload: AlertPayload):
         return {"status": "dry_run"}
 
     try:
-        res = switch_position(sym, action, leverage=custom_leverage)
+        res = switch_position(sym, action, leverage=custom_leverage, use_initial_capital=True)
 
         if "skipped" in res:
             logger.info(f"Skipped {action} {sym}: {res['skipped']}")
