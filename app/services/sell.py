@@ -4,19 +4,25 @@ from fastapi import HTTPException
 from binance.enums import SIDE_SELL, ORDER_TYPE_MARKET
 from binance.exceptions import BinanceAPIException
 from app.clients.binance_client import get_binance_client
-from app.config import DRY_RUN, TRADE_LEVERAGE
+from app.config import DRY_RUN, TRADE_LEVERAGE, BUY_PCT
 from app.state import get_state
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-def execute_sell(symbol: str, leverage: int = None, use_initial_capital: bool = False) -> dict:
+def execute_sell(
+    symbol: str,
+    leverage: int | None = None,
+    use_initial_capital: bool = False,
+    profile : str = "webhook1"
+) -> dict:
     """
-    - use_initial_capital=True: 포지션 사이징 시 state['initial_capital']만 사용 (/webhook2 경로)
-    - use_initial_capital=False: 기존처럼 state['capital'] 사용(복리 운용, /webhook 경로)
+    - use_initial_capital=True: state['initial_capital'] 기준 사이징 (/webhook2,3)
+    - use_initial_capital=False: state['capital'] 기준 사이징(복리, /webhook)
+    - profile: "webhook1" | "webhook2" | "webhook3"
     """
     client = get_binance_client()
-    state = get_state(symbol)
+    state = get_state(symbol, profile)
 
     if DRY_RUN:
         logger.info(f"[DRY_RUN] SELL {symbol}")
@@ -27,11 +33,15 @@ def execute_sell(symbol: str, leverage: int = None, use_initial_capital: bool = 
     client.futures_change_leverage(symbol=symbol, leverage=leverage_to_use)
 
     # ⬇️ 핵심: 사이징 기준 자본 선택
-    base_capital = state.get("initial_capital", 0.0) if use_initial_capital else state.get("capital", 0.0)
-
+    base_capital = (
+        state.get("initial_capital", 0.0)
+        if use_initial_capital
+        else state.get("capital", 0.0)
+    )
+    
     # 수량 계산
     mark_price = float(client.futures_mark_price(symbol=symbol)["markPrice"])
-    allocation = base_capital * 0.98 * leverage_to_use
+    allocation = base_capital * BUY_PCT * leverage_to_use
     raw_qty = allocation / mark_price
 
     # 거래소 LOT_SIZE 규칙에 맞춰 수량 보정
@@ -65,7 +75,10 @@ def execute_sell(symbol: str, leverage: int = None, use_initial_capital: bool = 
         logger.warning(f"[SELL] Failed to fetch avgPrice via orderId {order_id}: {e}")
         entry = mark_price
 
-    logger.info(f"[SELL] {symbol} {qty}@{entry} (base={'initial_capital' if use_initial_capital else 'capital'})")
+    logger.info(
+        f"[SELL] {profile}:{symbol} {qty}@{entry} "
+        f"(base={'initial_capital' if use_initial_capital else 'capital'})"
+    )
 
     # 상태 저장 (진입 정보 및 카운트)
     state.update({

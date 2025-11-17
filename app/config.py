@@ -25,3 +25,9 @@ SL_RATIO       = float(os.getenv("SL_RATIO", "0.995"))
 POLL_INTERVAL  = float(os.getenv("POLL_INTERVAL", "1.0"))
 # 최대 대기 시간 (초)
 MAX_WAIT       = int(os.getenv("MAX_WAIT", "15"))
+
+
+# ── 거래 수수료(기본 0.04%) ──────────────────────────
+# 선물 taker fee 기준 0.04% = 0.0004
+# 레버리지 5배 → 한쪽 0.2% (= 0.0004 * 5)
+FEE_RATE       = float(os.getenv("FEE_RATE", "0.0004"))
