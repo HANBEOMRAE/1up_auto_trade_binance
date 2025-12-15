@@ -97,6 +97,12 @@ async def report3(
 ):
     return await _report_internal("webhook3", symbol, all)
 
+@router.get("/report4", response_class=JSONResponse)
+async def report4(
+    symbol: str | None = Query(None, description="조회할 심볼 (예: ETH/USDT 또는 ETHUSDT)"),
+    all: bool = Query(False, description="해당 profile의 모든 심볼 리포트"),
+):
+    return await _report_internal("webhook4", symbol, all)
 
 
 # ── reset 로직 ─────────────────────────────────────────
@@ -166,4 +172,11 @@ async def reset_report3(
     symbol: str = Query(..., description="리셋할 심볼 (예: ETH/USDT 또는 ETHUSDT)"),
 ):
     result = _reset_internal("webhook3", symbol)
+    return JSONResponse(result)
+
+@router.post("/report4/reset", response_class=JSONResponse)
+async def reset_report4(
+    symbol: str = Query(..., description="리셋할 심볼 (예: ETH/USDT 또는 ETHUSDT)"),
+):
+    result = _reset_internal("webhook4", symbol)
     return JSONResponse(result)

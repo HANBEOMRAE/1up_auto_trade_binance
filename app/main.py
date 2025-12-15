@@ -23,11 +23,11 @@ def on_startup():
     2) 매일 KST 09:00에 일일 리포트 실행 스케줄러 등록
     """
 
-    # 1) 일일 리포트 스케줄러 (Asia/Seoul 09:00)
-    sched = BackgroundScheduler(timezone="Asia/Seoul")
-    # 매일 오전 09:00에 report() 호출
-    sched.add_job(lambda: report(), 'cron', hour=9, minute=0)
-    sched.start()
+    # # 1) 일일 리포트 스케줄러 (Asia/Seoul 09:00)
+    # sched = BackgroundScheduler(timezone="Asia/Seoul")
+    # # 매일 오전 09:00에 report() 호출
+    # sched.add_job(lambda: report(), 'cron', hour=9, minute=0)
+    # sched.start()
 
 
 # 라우터 등록
