@@ -2,8 +2,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# 다중 심볼 지원을 위한 상태 저장소
-# 심볼별로 모니터링 state를 분리하여 관리합니다.
 monitor_states: dict[str, dict] = {}
 
 def _make_key(symbol: str, profile: str) -> str:
@@ -14,45 +12,62 @@ def _default_state(symbol: str, profile: str) -> dict:
     now_str = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
     return {
         "profile": profile,
-        "symbol":         symbol,
-        "capital":        100.0,       # 초기 자본 $100
-        "initial_capital": 100.0,  # 처음 기준 자본 (수익률 계산용)
-        
+        "symbol": symbol,
 
-        # 진입 정보
-        "entry_price":    0.0,
-        "position_qty":   0.0,
+        # 공통 자본
+        "capital": 50.0,          # 복리용(웹훅5: compounding)
+        "initial_capital": 50.0,  # 고정자본용(웹훅6: no compounding)
+
+        # ===== 기존 webhook1~4 호환 필드(유지) =====
+        "entry_price": 0.0,
+        "position_qty": 0.0,
         "position_side": None,
-        "entry_time":     "",
+        "entry_time": "",
 
-        # 현재가 & PnL
-        "current_price":  0.0,
-        "pnl":            0.0,
+        "current_price": 0.0,
+        "pnl": 0.0,
         "daily_pnl": 0.0,
 
-        # 카운터
-        "trade_count":     0,
-        "long_count":      0,
-        "short_count":     0,
-        
+        "trade_count": 0,
+        "long_count": 0,
+        "short_count": 0,
+
         "leverage": 1,
-        "last_reset":      now_str,
+        "last_reset": now_str,
+
+        # ===== webhook5/6 (Hedge) 전용 필드 =====
+        # 거래소 동기화용(진짜 포지션 상태)
+        "hedge": {
+            "long": {
+                "qty": 0.0,         # Binance positionAmt (LONG는 +)
+                "entry_price": 0.0, # Binance entryPrice
+                "unrealized_pnl": 0.0,
+                "update_time": "",  # 마지막 동기화 시각(Asia/Seoul 문자열)
+            },
+            "short": {
+                "qty": 0.0,         # Binance positionAmt (SHORT는 -로 내려오는 경우 많음)
+                "entry_price": 0.0,
+                "unrealized_pnl": 0.0,
+                "update_time": "",
+            },
+        },
+
+        # 요청 레버리지 정책 확인용(“열려있으면 일치 강제”)
+        "hedge_symbol_leverage": 1,
+
+        # 추가진입 카운터(가드 넣을 때 유용)
+        "hedge_long_add_count": 0,
+        "hedge_short_add_count": 0,
     }
 
 
 def get_state(symbol: str, profile: str = "default") -> dict:
-    """
-    심볼 + 프로필 단위로 상태 관리.
-    profile 예: "webhook1", "webhook2", "webhook3"
-    """
     key = _make_key(symbol, profile)
     if key not in monitor_states:
         monitor_states[key] = _default_state(symbol, profile)
     return monitor_states[key]
 
+
 def list_symbols(profile: str) -> list[str]:
-    """
-    특정 profile(webhook1/2/3)에 대해 등록된 심볼 목록 반환
-    """
     prefix = f"{profile}:"
     return [k.split(":", 1)[1] for k in monitor_states.keys() if k.startswith(prefix)]

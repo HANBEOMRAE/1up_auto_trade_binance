@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.config import DRY_RUN
 from app.services.switching import switch_position
 from app.state import get_state
+from app.services.switching_hedge import switch_position_hedge
 
 logger = logging.getLogger("webhook")
 router = APIRouter()
@@ -20,6 +21,8 @@ PROFILE_WEBHOOK1 = "webhook1"
 PROFILE_WEBHOOK2 = "webhook2"
 PROFILE_WEBHOOK3 = "webhook3"
 PROFILE_WEBHOOK4 = "webhook4"
+PROFILE_WEBHOOK5 = "webhook5"
+PROFILE_WEBHOOK6 = "webhook6"
 
 # 복리 쓰는 레버리지 설정
 @router.post("/webhook")
@@ -286,3 +289,58 @@ async def webhook4(payload: AlertPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "ok", "result": res}
+
+class AlertPayloadV5(BaseModel):
+    symbol: str
+    action: str
+    leverage: int
+
+@router.post("/webhook5")
+async def webhook5(payload: AlertPayloadV5):
+    sym = payload.symbol.upper().replace("/", "")
+    action = payload.action.upper()
+    profile = PROFILE_WEBHOOK5
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym} lev={payload.leverage} ({profile})")
+        return {"status": "dry_run"}
+
+    try:
+        res = switch_position_hedge(
+            symbol=sym,
+            action=action,
+            leverage=payload.leverage,
+            profile=profile,
+            use_initial_capital=False,  # ✅ 복리
+        )
+        if "skipped" in res:
+            return {"status": "skipped", "reason": res["skipped"], "result": res}
+        return {"status": "ok", "result": res}
+    except Exception as e:
+        logger.exception(f"Error processing {action} for {sym} ({profile})")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/webhook6")
+async def webhook6(payload: AlertPayloadV5):
+    sym = payload.symbol.upper().replace("/", "")
+    action = payload.action.upper()
+    profile = PROFILE_WEBHOOK6
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym} lev={payload.leverage} ({profile})")
+        return {"status": "dry_run"}
+
+    try:
+        res = switch_position_hedge(
+            symbol=sym,
+            action=action,
+            leverage=payload.leverage,
+            profile=profile,
+            use_initial_capital=True,  # ✅ 복리X (initial_capital 고정)
+        )
+        if "skipped" in res:
+            return {"status": "skipped", "reason": res["skipped"], "result": res}
+        return {"status": "ok", "result": res}
+    except Exception as e:
+        logger.exception(f"Error processing {action} for {sym} ({profile})")
+        raise HTTPException(status_code=500, detail=str(e))
